@@ -1,0 +1,152 @@
+name: pulsecheck
+
+x-app-env: &app-env
+  ENVIRONMENT: development
+  LOG_LEVEL: INFO
+  DATABASE_URL: postgresql+asyncpg://pulsecheck:pulsecheck@postgres:5432/pulsecheck
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
+  # DEV ONLY: allows monitoring containers on the compose network. Cloud metadata
+  # addresses stay blocked. Must be false in production.
+  ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-true}
+  MIN_INTERVAL_SECONDS: ${MIN_INTERVAL_SECONDS:-5}
+  SCHEDULER_TICK_SECONDS: 1
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+  SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+  MAIL_FROM: ${MAIL_FROM:-PulseCheck <alerts@pulsecheck.local>}
+
+x-app: &app
+  build: .
+  image: pulsecheck-app:local
+  restart: unless-stopped
+  environment: *app-env
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pulsecheck
+      POSTGRES_PASSWORD: pulsecheck
+      POSTGRES_DB: pulsecheck
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulsecheck -d pulsecheck"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    <<: *app
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8001:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/readyz', timeout=3).status == 200 else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  scheduler:
+    <<: *app
+    command: python -m app.workers.scheduler
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "scheduler"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  check-worker:
+    <<: *app
+    command: python -m app.workers.check_worker
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "check-worker"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  notification-worker:
+    <<: *app
+    command: python -m app.workers.notification_worker
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "notification-worker"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Controlled local target for the smoke test. GET /status/<code> returns that code,
+  # GET /delay/<seconds> sleeps first. Not part of the product.
+  target:
+    <<: *app
+    command: python tools/target_server.py
+    depends_on: {}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9000/status/200', timeout=3).status == 200 else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

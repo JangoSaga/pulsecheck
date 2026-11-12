@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/v1/monitors", tags=["monitors"])
 
 
 def _unprocessable(detail: str) -> HTTPException:
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail)
+    return HTTPException(422, detail)
 
 
 async def _validate(
@@ -87,7 +87,7 @@ async def create_monitor(
 
 
 @router.get("", response_model=Page[MonitorOut])
-async def list_monitors(user: CurrentUser, session: SessionDep, page: PageDep) -> Page[Monitor]:
+async def list_monitors(user: CurrentUser, session: SessionDep, page: PageDep) -> Page:
     total = await session.scalar(
         select(func.count()).select_from(Monitor).where(Monitor.user_id == user.id)
     )
@@ -178,7 +178,7 @@ async def list_checks(
     page: PageDep,
     rng: RangeDep,
     outcome: Annotated[Literal["healthy", "unhealthy"] | None, Query()] = None,
-) -> Page[MonitorCheck]:
+) -> Page:
     conds = [
         MonitorCheck.monitor_id == monitor.id,
         MonitorCheck.checked_at >= rng.start,
@@ -210,7 +210,7 @@ async def list_incidents(
     page: PageDep,
     rng: RangeDep,
     incident_status: Annotated[Literal["open", "resolved"] | None, Query(alias="status")] = None,
-) -> Page[Incident]:
+) -> Page:
     conds = [
         Incident.monitor_id == monitor.id,
         Incident.started_at >= rng.start,

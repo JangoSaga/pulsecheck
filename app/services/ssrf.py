@@ -54,12 +54,18 @@ class Target:
     port: int
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _unwrap(ip: IPAddress) -> IPAddress:
     if isinstance(ip, ipaddress.IPv6Address):
         if ip.ipv4_mapped is not None:
             return ip.ipv4_mapped
         if ip.sixtofour is not None:
             return ip.sixtofour
+        if ip in _NAT64:
+            # NAT64 well-known prefix embeds an IPv4 address that a gateway would reach.
+            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
         teredo = ip.teredo
         if teredo is not None:
             return teredo[1]

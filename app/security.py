@@ -10,8 +10,8 @@ from app.config import Settings
 _DUMMY_HASH = bcrypt.hashpw(b"dummy-password", bcrypt.gensalt(rounds=10)).decode()
 
 
-def _hash(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+def _hash(password: str, rounds: int) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=rounds)).decode()
 
 
 def _verify(password: str, hashed: str) -> bool:
@@ -21,8 +21,8 @@ def _verify(password: str, hashed: str) -> bool:
         return False
 
 
-async def hash_password(password: str) -> str:
-    return await asyncio.to_thread(_hash, password)
+async def hash_password(password: str, rounds: int = 12) -> str:
+    return await asyncio.to_thread(_hash, password, rounds)
 
 
 async def verify_password(password: str, hashed: str | None) -> bool:

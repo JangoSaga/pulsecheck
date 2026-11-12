@@ -5,7 +5,7 @@ x-app-env: &app-env
   LOG_LEVEL: INFO
   DATABASE_URL: postgresql+asyncpg://pulsecheck:pulsecheck@postgres:5432/pulsecheck
   REDIS_URL: redis://redis:6379/0
-  JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
+  JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me-0123456789}
   # DEV ONLY: allows monitoring containers on the compose network. Cloud metadata
   # addresses stay blocked. Must be false in production.
   ALLOW_PRIVATE_TARGETS: ${ALLOW_PRIVATE_TARGETS:-true}

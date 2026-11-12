@@ -104,10 +104,10 @@ def date_range(
     end = _aware(to) if to else datetime.now(UTC)
     start = _aware(from_) if from_ else end - DEFAULT_RANGE
     if start >= end:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "'from' must be before 'to'")
+        raise HTTPException(422, "'from' must be before 'to'")
     if end - start > MAX_RANGE:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            422,
             f"Date range must not exceed {MAX_RANGE.days} days",
         )
     return DateRange(start, end)

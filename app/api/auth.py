@@ -11,12 +11,14 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, session: SessionDep) -> User:
+async def register(body: RegisterRequest, session: SessionDep, settings: SettingsDep) -> User:
     email = body.email.lower()
     existing = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
-    user = User(email=email, password_hash=await hash_password(body.password))
+    user = User(
+        email=email, password_hash=await hash_password(body.password, settings.bcrypt_rounds)
+    )
     session.add(user)
     try:
         await session.commit()

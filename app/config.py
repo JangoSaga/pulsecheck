@@ -3,7 +3,7 @@ from functools import lru_cache
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEV_JWT_SECRET = "dev-insecure-secret-change-me"  # noqa: S105
+DEV_JWT_SECRET = "dev-insecure-secret-change-me-0123456789"  # noqa: S105
 
 
 class Settings(BaseSettings):
@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     jwt_secret: str = DEV_JWT_SECRET
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
+    bcrypt_rounds: int = 12
 
     # SSRF guard. Only enable in a controlled development environment.
     allow_private_targets: bool = False

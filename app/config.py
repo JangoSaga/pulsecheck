@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_JWT_SECRET = "dev-insecure-secret-change-me-0123456789"  # noqa: S105
@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = False
     smtp_timeout_seconds: float = 10.0
     mail_from: str = "PulseCheck <alerts@pulsecheck.local>"
+
+    @field_validator("database_url")
+    @classmethod
+    def _async_driver(cls, v: str) -> str:
+        # Render (and Heroku-style hosts) provide postgres:// or postgresql://.
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+asyncpg://" + v[len(prefix) :]
+        return v
 
     @model_validator(mode="after")
     def _reject_unsafe_production(self) -> "Settings":

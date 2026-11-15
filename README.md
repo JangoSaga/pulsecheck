@@ -1,11 +1,95 @@
 # PulseCheck
 
+[![CI](https://github.com/JangoSaga/pulsecheck/actions/workflows/ci.yml/badge.svg)](https://github.com/JangoSaga/pulsecheck/actions/workflows/ci.yml)
+
 Uptime monitoring backend. Users register HTTP endpoints as monitors. PulseCheck checks
 them on a schedule, records every result, opens and resolves incidents using
 consecutive-failure thresholds, emails the owner, and reports uptime analytics.
 
 Stack: Python 3.12, FastAPI, SQLAlchemy 2 (async) + asyncpg, Alembic, PostgreSQL 16,
 Redis 7, httpx, APScheduler, aiosmtplib, Pydantic v2, pytest, ruff, uv, Docker Compose.
+
+**Live demo:** _coming soon (Render URL will be added after deploy)_
+
+## What this project demonstrates
+
+| Skill | Where to look |
+|---|---|
+| Multi-process architecture (API, scheduler, workers) that scales horizontally | `app/workers/`, `docker-compose.yml` |
+| Safe concurrency in PostgreSQL (`FOR UPDATE SKIP LOCKED`, row locks, partial unique indexes) | `app/services/scheduling.py`, `app/services/state.py`, `alembic/versions/0001_initial.py` |
+| Reliable job queue on Redis (`BLMOVE`, visibility timeout, per-monitor locks) | `app/services/queue.py` |
+| Security thinking: SSRF defence with DNS pinning, JWT auth, ownership checks, log redaction | `app/services/ssrf.py`, `app/security.py`, `app/logging.py` |
+| At-least-once delivery with dedup and exponential backoff | `app/services/notifier.py` |
+| Testing against real infrastructure, not mocks of it | `tests/` (222 tests, real PostgreSQL, Redis and HTTP server) |
+| CI: lint, migration drift check, tests, full-stack Docker smoke test | `.github/workflows/ci.yml` |
+| Deployable as code | `render.yaml` |
+
+## How it works, in plain language
+
+Follow one monitor from creation to an alert email:
+
+1. **You create a monitor** through the API: a URL, how often to check it (say every 60 s),
+   and how many failures in a row count as "down" (say 3). The API only stores this. It never
+   calls your URL itself, so a slow target can never slow the API down.
+2. **The scheduler wakes every couple of seconds** and asks PostgreSQL "which monitors are due?".
+   It claims them with `FOR UPDATE SKIP LOCKED`, which means two schedulers can run at once and
+   will never grab the same monitor. It then pushes one job per monitor into a Redis list.
+3. **A check worker pops a job** (moving it to a "processing" list, so a crash cannot lose it),
+   re-validates the URL against the SSRF rules, sends the HTTP request with strict timeouts and
+   records the result.
+4. **The state machine decides what the result means.** One failure is just a failure. Three in
+   a row open an *incident*. Two successes in a row (the recovery threshold) resolve it. This
+   stops a single network blip from paging you.
+5. **Opening or resolving an incident queues a notification row.** A unique constraint
+   guarantees at most one row per incident event, no matter how many workers race.
+6. **The notification worker emails the owner.** If SMTP fails temporarily it retries with
+   backoff (30 s, 60 s, 120 s, ...). If SMTP rejects permanently it marks the row `failed` and
+   stops.
+7. **Analytics** are computed on demand from the stored check rows with PostgreSQL percentile
+   functions.
+
+## Key design decisions and why
+
+| Decision | Alternative | Why this one |
+|---|---|---|
+| PostgreSQL is the source of truth, Redis is only a queue | Keep state in Redis | Losing Redis then costs one missed check per monitor, never data |
+| Separate scheduler, worker and API processes | One process with background tasks | Each part scales and fails independently, and a hung check cannot block requests |
+| Redirects are never followed | Follow up to N redirects | A redirect is the classic way to bounce a public URL to an internal address (SSRF) |
+| Connect to the validated IP, keep the hostname for TLS | Resolve, validate, then let the HTTP client resolve again | Closes the DNS rebinding gap between validation and connection |
+| Consecutive-failure thresholds | Alert on every failure | Real networks are noisy, and alert fatigue defeats the purpose of monitoring |
+| Missing checks are excluded from uptime, and coverage is reported separately | Treat gaps as downtime or as uptime | Never invents data in either direction, and low coverage is visible |
+| At-least-once notifications | Exactly-once | Exactly-once is not achievable over SMTP. A rare duplicate email is better than a lost one |
+
+## Deploy to Render
+
+The repo ships a Blueprint, `render.yaml`. Render reads it and creates everything.
+
+| Render resource | Plan | Notes |
+|---|---|---|
+| `pulsecheck-api` (web) | Free | Runs migrations on start, health check on `/readyz` |
+| `pulsecheck-scheduler`, `-check-worker`, `-notification-worker` (workers) | Starter, about $7/month each | Render has no free background workers |
+| `pulsecheck-db` (PostgreSQL 16) | Free | Free databases expire after 30 days and are deleted after a 14-day grace period unless upgraded |
+| `pulsecheck-redis` (Key Value) | Free | Not persisted: a restart empties the queue. This is safe, see "Redis data loss" below |
+
+Steps:
+
+1. Push this repo to GitHub and make sure the CI run is green. Deploys are set to
+   `autoDeployTrigger: checksPass`, so Render only deploys commits whose checks passed.
+2. In Render choose **New, Blueprint**, select the repo and apply.
+3. Fill the variables marked `sync: false`: `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
+   `MAIL_FROM`. Use any SMTP provider (Brevo, Resend, and similar). Without them monitors still
+   work but alert emails will fail and end up as `failed` notifications.
+4. `JWT_SECRET` is generated by Render. `ENVIRONMENT=production` makes the app refuse to start
+   with a weak secret or with `ALLOW_PRIVATE_TARGETS=true`.
+5. Verify: open `https://<your-service>.onrender.com/docs` and `/readyz`.
+
+Notes:
+
+- `DATABASE_URL` may be `postgres://`, `postgresql://` or `postgresql+asyncpg://`. Render supplies
+  the first form and the settings normalise it to the asyncpg driver.
+- The free web service sleeps when idle and takes a short while to wake on the next request.
+  The workers are separate paid services and keep running regardless.
+- In production private and loopback targets are blocked, so only public URLs can be monitored.
 
 ## Quick start
 
